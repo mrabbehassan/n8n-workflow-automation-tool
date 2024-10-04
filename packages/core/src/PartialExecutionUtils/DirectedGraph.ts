@@ -60,6 +60,58 @@ export class DirectedGraph {
 		return this;
 	}
 
+	removeNode(node: INode, options?: { reconnectConnections: true }): GraphConnection[];
+	removeNode(node: INode, options?: { reconnectConnections: false }): undefined;
+	removeNode(node: INode, { reconnectConnections = false } = {}): undefined | GraphConnection[] {
+		if (reconnectConnections) {
+			const incomingConnections = this.getDirectParents(node);
+			const outgoingConnections = this.getDirectChildren(node)
+				// TODO: Should I retain this or change it? Retaining this makes the API of
+				// this class confusing, and the behavior is confusing anyways.
+				// NOTE: When a node is disabled only the first output gets data
+				.filter((connection) => connection.outputIndex === 0);
+
+			const newConnections: GraphConnection[] = [];
+
+			// TODO: I suppose this only needs to happen for main connections
+			for (const incomingConnection of incomingConnections) {
+				for (const outgoingConnection of outgoingConnections) {
+					const newConnection = {
+						...incomingConnection,
+						to: outgoingConnection.to,
+						inputIndex: outgoingConnection.inputIndex,
+					};
+
+					newConnections.push(newConnection);
+				}
+			}
+
+			for (const [key, connection] of this.connections.entries()) {
+				if (connection.to === node || connection.from === node) {
+					this.connections.delete(key);
+				}
+			}
+
+			for (const newConnection of newConnections) {
+				this.connections.set(this.makeKey(newConnection), newConnection);
+			}
+
+			this.nodes.delete(node.name);
+
+			return newConnections;
+		} else {
+			for (const [key, connection] of this.connections.entries()) {
+				if (connection.to === node || connection.from === node) {
+					this.connections.delete(key);
+				}
+			}
+
+			this.nodes.delete(node.name);
+
+			return;
+		}
+	}
+
 	addNodes(...nodes: INode[]) {
 		for (const node of nodes) {
 			this.addNode(node);
@@ -202,10 +254,101 @@ export class DirectedGraph {
 	 * argument.
 	 *
 	 * If the node being passed in is a child of itself (e.g. is part of a
-	 * cylce), the return set will contain it as well.
+	 * cycle), the return set will contain it as well.
 	 */
 	getChildren(node: INode) {
 		return this.getChildrenRecursive(node, new Set());
+	}
+
+	private stronglyConnectedComponents: INode[][] = [];
+
+	private indexes: Map<INode, number> = new Map();
+
+	tarjan(): INode[][] {
+		for (const node of this.nodes.values()) {
+			if (this.indexes.has(node)) {
+				continue;
+			}
+
+			this.strongConnect(node);
+		}
+
+		return this.stronglyConnectedComponents;
+	}
+
+	private index = 0;
+
+	private lowLinks: Map<INode, number> = new Map();
+
+	private stack: INode[] = [];
+
+	private onStack: Set<INode> = new Set();
+
+	private strongConnect(node: INode) {
+		this.indexes.set(node, this.index);
+		this.lowLinks.set(node, this.index);
+		this.index++;
+		this.stack.push(node);
+		this.onStack.add(node);
+
+		for (const connection of this.connections.values()) {
+			if (connection.from !== node) {
+				continue;
+			}
+
+			if (!this.indexes.has(connection.to)) {
+				this.strongConnect(connection.to);
+				this.lowLinks.set(
+					node,
+					Math.min(this.lowLinks.get(node)!, this.lowLinks.get(connection.to)!),
+				);
+			} else {
+				this.lowLinks.set(
+					node,
+					Math.min(this.lowLinks.get(node)!, this.indexes.get(connection.to)!),
+				);
+			}
+		}
+
+		if (this.lowLinks.get(node) === this.indexes.get(node)) {
+			const scc: INode[] = [];
+			let w: INode;
+			do {
+				w = this.stack.pop()!;
+				this.onStack.delete(w);
+				scc.push(w);
+			} while (w !== node);
+			this.stronglyConnectedComponents.push(scc);
+		}
+	}
+
+	private depthFirstSearchRecursive(
+		from: INode,
+		fn: (node: INode) => boolean,
+		seen: Set<INode>,
+	): INode | undefined {
+		if (seen.has(from)) {
+			return;
+		}
+		seen.add(from);
+
+		if (fn(from)) {
+			return from;
+		}
+
+		for (const childConnection of this.getDirectChildren(from)) {
+			const found = this.depthFirstSearchRecursive(childConnection.to, fn, seen);
+
+			if (found) {
+				return found;
+			}
+		}
+
+		return;
+	}
+
+	depthFirstSearch({ from, fn }: { from: INode; fn: (node: INode) => boolean }): INode | undefined {
+		return this.depthFirstSearchRecursive(from, fn, new Set());
 	}
 
 	getDirectParents(node: INode) {

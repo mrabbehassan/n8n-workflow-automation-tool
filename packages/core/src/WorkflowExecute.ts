@@ -56,6 +56,7 @@ import {
 	findSubgraph,
 	findTriggerForPartialExecution,
 } from './PartialExecutionUtils';
+import { inspect } from 'util';
 import { cleanRunData } from './PartialExecutionUtils/cleanRunData';
 import { recreateNodeExecutionStack } from './PartialExecutionUtils/recreateNodeExecutionStack';
 
@@ -339,37 +340,80 @@ export class WorkflowExecute {
 		);
 
 		// 1. Find the Trigger
+		console.log('TRIGGER');
 		const trigger = findTriggerForPartialExecution(workflow, destinationNodeName);
 		if (trigger === undefined) {
 			throw new ApplicationError(
 				'The destination node is not connected to any trigger. Partial executions need a trigger.',
 			);
 		}
+		console.log(trigger.name);
 
 		// 2. Find the Subgraph
+		console.log('SUBGRAPH');
 		const graph = DirectedGraph.fromWorkflow(workflow);
 		const subgraph = findSubgraph(graph, destinationNode, trigger);
 		const filteredNodes = subgraph.getNodes();
+		const filteredNodeNames = Array.from(filteredNodes.values()).map((node) => node.name);
+		console.log([...subgraph.getNodes().keys()]);
 
 		// 3. Find the Start Nodes
+		console.log('START NODES');
 		const startNodes = findStartNodes(subgraph, trigger, destinationNode, runData);
+		assert.ok(startNodes.length > 0, 'we need a start node');
+		console.log(startNodes.map((n) => n.name));
 
 		// 4. Detect Cycles
-		const cycles = findCycles(workflow);
+		console.log('CYCLES');
+		const cycles = new Set(subgraph.tarjan().filter((cycle) => cycle.length >= 2));
+		console.log(cycles.size);
 
 		// 5. Handle Cycles
-		if (cycles.length) {
-			// TODO: handle
-		}
+		console.log('HANDLE CYCLES');
+		//if (cycles.size) {
+		//	//1. for each start node
+		//	for (const startNode of startNodes) {
+		//		for (const cycle of cycles) {
+		//			//    1. is the start node part of a cycle
+		//			const isPartOfCycle = cycle.includes(startNode);
+		//			// 2. yes:
+		//			if (isPartOfCycle) {
+		//				// find first node of cycle
+		//				const firstNode = subgraph.depthFirstSearch({
+		//					from: startNode,
+		//					fn: (node) => cycle.includes(node),
+		//				});
+		//
+		//				assert.ok(
+		//					firstNode,
+		//					"the trigger must be connected to the cycle, otherwise the cycle wouldn't be part of the subgraph",
+		//				);
+		//
+		//				// 1. the start of the cycle is the new start node
+		//				startNodes.splice(startNodes.indexOf(startNode), 1, firstNode);
+		//				//   ~1. if the cycle is nested, pick the start of the outer most cycle~
+		//			}
+		//			//        1. no: do nothing
+		//		}
+		//	}
+		//}
+		//console.log(startNodes.map((n) => n.name));
 
 		// 6. Clean Run Data
+		console.log('CLEAN RUN DATA');
 		const newRunData: IRunData = cleanRunData(runData, graph, startNodes);
+		console.log('old', Object.keys(runData));
+		console.log('new', Object.keys(newRunData));
 
 		// 7. Recreate Execution Stack
+		console.log('RECREATE EXECUTION STACK');
 		const { nodeExecutionStack, waitingExecution, waitingExecutionSource } =
-			recreateNodeExecutionStack(subgraph, startNodes, destinationNode, runData, pinData ?? {});
+			recreateNodeExecutionStack(subgraph, startNodes, runData, pinData ?? {});
+		//recreateNodeExecutionStack(subgraph, startNodes, destinationNode, runData, pinData ?? {});
 
 		// 8. Execute
+		console.log('EXECUTE');
+		// TODO: can probably remove this, because `processRunExecutionData` sets it as well
 		this.status = 'running';
 		this.runExecutionData = {
 			startData: {
@@ -394,7 +438,6 @@ export class WorkflowExecute {
 
 	/**
 	 * Executes the hook with the given name
-	 *
 	 */
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	async executeHook(hookName: string, parameters: any[]): Promise<void> {
@@ -989,9 +1032,39 @@ export class WorkflowExecute {
 					throw error;
 				}
 
+				console.log('-------------------START--------------------------------');
 				executionLoop: while (
 					this.runExecutionData.executionData!.nodeExecutionStack.length !== 0
 				) {
+					console.log('---------------------');
+					console.log(
+						'nodeExecutionStack',
+						inspect(
+							this.runExecutionData.executionData?.nodeExecutionStack,
+							//	.map((v) => ({
+							//	nodeName: v.node.name,
+							//	sourceName: v.source?.main.map((vv) => vv?.previousNode),
+							//})),
+							{ depth: null, colors: true, compact: true },
+						),
+					);
+					console.log(
+						'waitingExecution',
+						inspect(this.runExecutionData.executionData?.waitingExecution, {
+							depth: null,
+							colors: true,
+							compact: true,
+						}),
+					);
+					console.log(
+						'waitingExecutionSource',
+						inspect(this.runExecutionData.executionData?.waitingExecutionSource, {
+							depth: null,
+							colors: true,
+							compact: true,
+						}),
+					);
+
 					if (
 						this.additionalData.executionTimeoutTimestamp !== undefined &&
 						Date.now() >= this.additionalData.executionTimeoutTimestamp
@@ -1058,7 +1131,7 @@ export class WorkflowExecute {
 						this.runExecutionData.startData!.runNodeFilter.indexOf(executionNode.name) === -1
 					) {
 						// If filter is set and node is not on filter skip it, that avoids the problem that it executes
-						// leafs that are parallel to a selected destinationNode. Normally it would execute them because
+						// leaves that are parallel to a selected destinationNode. Normally it would execute them because
 						// they have the same parent and it executes all child nodes.
 						continue;
 					}
@@ -1759,7 +1832,7 @@ export class WorkflowExecute {
 										continue;
 									}
 								} else {
-									// A certain amout of inputs are required (amount of inputs)
+									// A certain amount of inputs are required (amount of inputs)
 									if (inputsWithData.length < requiredInputs) {
 										continue;
 									}
@@ -1817,12 +1890,23 @@ export class WorkflowExecute {
 								// Node to add did not get found, rather an empty one removed so continue with search
 								waitingNodes = Object.keys(this.runExecutionData.executionData!.waitingExecution);
 								// Set counter to start again from the beginning. Set it to -1 as it auto increments
-								// after run. So only like that will we end up again ot 0.
+								// after run. So only like that will we end up again to 0.
 								i = -1;
 							}
 						}
 					}
 				}
+
+				console.log('---------------------');
+				console.log(
+					'nodeExecutionStack',
+					this.runExecutionData.executionData?.nodeExecutionStack.map((v) => ({
+						nodeName: v.node.name,
+						sourceName: v.source?.main.map((w) => w?.previousNode),
+					})),
+				);
+				console.log('waitingExecution', this.runExecutionData.executionData?.waitingExecution);
+				console.log('-------------------END--------------------------------');
 
 				return;
 			})()

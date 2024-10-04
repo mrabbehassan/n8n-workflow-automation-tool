@@ -1,7 +1,7 @@
 import type { INode, IPinData, IRunData } from 'n8n-workflow';
 
 import type { DirectedGraph } from './DirectedGraph';
-import { getIncomingData } from './getIncomingData';
+import { getIncomingDataFromAnyRun } from './getIncomingData';
 
 /**
  * A node is dirty if either of the following is true:
@@ -56,6 +56,21 @@ function findStartNodesRecursive(
 	startNodes: Set<INode>,
 	seen: Set<INode>,
 ): Set<INode> {
+	console.log('=>', current.name);
+	//// TODO: find a consistent way to identify triggers
+	//const isTrigger = false;
+	//
+	//// if the current node is not a trigger
+	//if (!isTrigger) {
+	//	//and has no input data (on all connections)
+	//	const parents = graph.getDirectParents(current);
+	//	const allParentsHaveData = parents.every((c) => runData[c.from.name] || pinData[c.from.name]);
+	//
+	//	if (!allParentsHaveData) {
+	//		return startNodes;
+	//	}
+	//}
+
 	const nodeIsDirty = isDirty(current, runData, pinData);
 
 	// If the current node is dirty stop following this branch, we found a start
@@ -82,19 +97,27 @@ function findStartNodesRecursive(
 	// Recurse with every direct child that is part of the sub graph.
 	const outGoingConnections = graph.getDirectChildren(current);
 	for (const outGoingConnection of outGoingConnections) {
-		const nodeRunData = getIncomingData(
+		//const nodeRunData = getIncomingData(
+		//	runData,
+		//	outGoingConnection.from.name,
+		//	// FIXME: this makes loops not work at all because the done output will
+		//	// never have data on the first run, thus loops just don't work
+		//	// NOTE: It's always 0 until I fix the bug that removes the run data for
+		//	// old runs. The FE only sends data for one run for each node.
+		//	0,
+		//	outGoingConnection.type,
+		//	outGoingConnection.outputIndex,
+		//);
+		const nodeRunData = getIncomingDataFromAnyRun(
 			runData,
 			outGoingConnection.from.name,
-			// NOTE: It's always 0 until I fix the bug that removes the run data for
-			// old runs. The FE only sends data for one run for each node.
-			0,
 			outGoingConnection.type,
 			outGoingConnection.outputIndex,
 		);
 
 		// If the node has multiple outputs, only follow the outputs that have run data.
 		const hasNoRunData =
-			nodeRunData === null || nodeRunData === undefined || nodeRunData.length === 0;
+			nodeRunData === null || nodeRunData === undefined || nodeRunData.data.length === 0;
 		if (hasNoRunData) {
 			continue;
 		}

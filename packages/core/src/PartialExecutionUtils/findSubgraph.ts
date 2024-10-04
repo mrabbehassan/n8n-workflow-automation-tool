@@ -11,6 +11,7 @@ function findSubgraphRecursive(
 	newGraph: DirectedGraph,
 	currentBranch: GraphConnection[],
 ) {
+	debugger;
 	// If the current node is the chosen trigger keep this branch.
 	if (current === trigger) {
 		for (const connection of currentBranch) {
